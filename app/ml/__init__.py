@@ -6,6 +6,7 @@ from app.ml.section_detector import SectionDetector, Section
 from app.ml.metadata_extractor import MetadataExtractor, MetadataValue
 from app.ml.qa_detector import QADetector, QAPair, QuestionType
 from app.ml.content_classifier import ContentClassifier, ContentType, ContentClassification
+from app.ml.adaptive_learner import AdaptiveLearner, FeatureStore, Correction, ModelVersion, PerformanceMetrics
 
 __all__ = [
     "PatternLearner",
@@ -20,5 +21,10 @@ __all__ = [
     "ContentClassifier",
     "ContentType",
     "ContentClassification",
+    "AdaptiveLearner",
+    "FeatureStore",
+    "Correction",
+    "ModelVersion",
+    "PerformanceMetrics",
 ]
 
