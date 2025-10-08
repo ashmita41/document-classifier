@@ -5,6 +5,7 @@ from app.ml.pattern_learner import PatternLearner, FeatureExtractor
 from app.ml.section_detector import SectionDetector, Section
 from app.ml.metadata_extractor import MetadataExtractor, MetadataValue
 from app.ml.qa_detector import QADetector, QAPair, QuestionType
+from app.ml.content_classifier import ContentClassifier, ContentType, ContentClassification
 
 __all__ = [
     "PatternLearner",
@@ -16,5 +17,8 @@ __all__ = [
     "QADetector",
     "QAPair",
     "QuestionType",
+    "ContentClassifier",
+    "ContentType",
+    "ContentClassification",
 ]
 
