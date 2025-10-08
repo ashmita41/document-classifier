@@ -780,28 +780,6 @@ class PatternLearner:
         
         return df.head(top_n)
     
-    def visualize_patterns(self) -> Dict[str, Any]:
-        """
-        Generate pattern visualization data for debugging.
-        
-        Returns:
-            Dictionary with pattern statistics and examples
-        """
-        viz_data = {
-            'n_patterns': len(self.patterns),
-            'n_samples': self.n_samples_trained,
-            'patterns': {}
-        }
-        
-        for label, pattern_data in self.patterns.items():
-            viz_data['patterns'][label] = {
-                'count': pattern_data['n_samples'],
-                'examples': pattern_data['examples'],
-                'top_features': self._get_top_discriminative_features(label, top_n=5)
-            }
-        
-        return viz_data
-    
     def _build_pattern_database(
         self, 
         X: np.ndarray, 
@@ -870,6 +848,28 @@ class PatternLearner:
             self.classifier.fit(self.X_train, self.y_train)
         
         self.last_trained = datetime.now().isoformat()
+    
+    def visualize_patterns(self) -> Dict[str, Any]:
+        """
+        Generate pattern visualization data for debugging.
+        
+        Returns:
+            Dictionary with pattern statistics and examples
+        """
+        viz_data = {
+            'n_patterns': len(self.patterns),
+            'n_samples': self.n_samples_trained,
+            'patterns': {}
+        }
+        
+        for label, pattern_data in self.patterns.items():
+            viz_data['patterns'][label] = {
+                'count': pattern_data['n_samples'],
+                'examples': pattern_data['examples'],
+                'top_features': self._get_top_discriminative_features(label, top_n=5)
+            }
+        
+        return viz_data
     
     def _get_top_discriminative_features(
         self, 
