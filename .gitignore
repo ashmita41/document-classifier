@@ -159,7 +159,19 @@ tmp/
 *.model
 *.bin
 data/
+patterns_db.json
 
 # Static files
 static/uploads/
+
+# Test and demo files (not for production)
+test_*.py
+demo_*.py
+verify_*.py
+*_example.py
+*_test.py
+*_demo.py
+example_*.py
+sample_*.py
+MONGODB_SETUP.md
 
