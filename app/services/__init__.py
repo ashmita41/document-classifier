@@ -17,6 +17,10 @@ from app.services.storage_service import (
     DocumentNotFoundError,
     TransactionError,
 )
+from app.services.mongodb_storage import (
+    MongoDBStorage,
+    MongoStorageError,
+)
 
 __all__ = [
     # PDF Extractor
@@ -30,11 +34,14 @@ __all__ = [
     "ProcessingCancelledException",
     "ResourceLimitExceeded",
     "CacheService",
-    # Storage Service
+    # Storage Service (PostgreSQL)
     "StorageService",
     "StorageError",
     "ConnectionError",
     "DocumentNotFoundError",
     "TransactionError",
+    # MongoDB Storage
+    "MongoDBStorage",
+    "MongoStorageError",
 ]
 

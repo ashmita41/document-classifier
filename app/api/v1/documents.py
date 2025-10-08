@@ -39,7 +39,11 @@ from app.models.document import (
     FeedbackEntry,
     FeedbackType,
 )
-from app.services.storage_service import StorageService, DocumentNotFoundError
+from app.services.mongodb_storage import MongoDBStorage as StorageService
+# Note: You can also use PostgreSQL StorageService:
+# from app.services.storage_service import StorageService
+
+DocumentNotFoundError = Exception  # Generic exception for document not found
 from app.services.document_processor import DocumentProcessor, CacheService
 from app.services.pdf_extractor import PDFExtractor
 from app.ml.pattern_learner import PatternLearner
@@ -183,13 +187,13 @@ def get_storage_service() -> StorageService:
     """Get storage service instance."""
     global _storage_service
     if _storage_service is None:
-        # Initialize with database URL from environment
+        # Initialize with MongoDB Atlas URI from environment
         import os
-        database_url = os.getenv(
-            "DATABASE_URL",
-            "postgresql+asyncpg://user:password@localhost/document_classifier"
+        mongodb_uri = os.getenv(
+            "MONGODB_URI",
+            "mongodb://localhost:27017"  # Default local MongoDB
         )
-        _storage_service = StorageService(database_url)
+        _storage_service = StorageService(mongodb_uri)
     return _storage_service
 
 
