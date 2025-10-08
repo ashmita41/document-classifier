@@ -8,8 +8,14 @@ from app.services.document_processor import (
     PDFValidationError,
     ProcessingCancelledException,
     ResourceLimitExceeded,
-    StorageService,
     CacheService,
+)
+from app.services.storage_service import (
+    StorageService,
+    StorageError,
+    ConnectionError,
+    DocumentNotFoundError,
+    TransactionError,
 )
 
 __all__ = [
@@ -23,7 +29,12 @@ __all__ = [
     "PDFValidationError",
     "ProcessingCancelledException",
     "ResourceLimitExceeded",
-    "StorageService",
     "CacheService",
+    # Storage Service
+    "StorageService",
+    "StorageError",
+    "ConnectionError",
+    "DocumentNotFoundError",
+    "TransactionError",
 ]
 
