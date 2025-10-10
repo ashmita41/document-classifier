@@ -7,41 +7,8 @@ Intelligent PDF document parser that automatically extracts structured content f
 - Automatic section detection with hierarchical nesting
 - Contextual metadata extraction (deadlines, contacts, references)
 - Question-answer pair detection
-- 100% section coverage with full text descriptions
 - REST API with async processing
 - Web interface for document upload and analysis
-- Standalone CLI tool
-
-## Quick Start
-
-### Backend + Frontend
-```bash
-# Windows
-RUN_BOTH.bat
-
-# Docker
-docker-compose up -d
-```
-
-### Standalone CLI
-```bash
-python -m core.document_analyzer_v2 document.pdf output.json
-```
-
-## Installation
-
-```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Optional: Enhanced NER
-pip install spacy
-python -m spacy download en_core_web_sm
-
-# Configure environment
-cp env.template .env
-# Edit .env with your MongoDB URI
-```
 
 ## API Endpoints
 
@@ -52,7 +19,6 @@ Content-Type: multipart/form-data
 
 Parameters:
 - file: PDF file (required)
-- process_immediately: boolean (optional, default: false)
 
 Response: 202 Accepted
 {
@@ -154,13 +120,6 @@ Response: 200 OK
   ]
 }
 ```
-
-## API Documentation
-
-Interactive API documentation available at:
-- Swagger UI: `http://localhost:8000/docs`
-- ReDoc: `http://localhost:8000/redoc`
-
 ## Project Structure
 
 ```
@@ -205,13 +164,6 @@ docker-compose logs -f
 docker-compose down
 ```
 
-## Performance
-
-- Processing: ~9 seconds for 30-page RFP
-- Section coverage: 100%
-- Metadata extraction: 150+ items per document
-- Q&A detection: 95+ pairs per document
-
 ## Output Format
 
 All content is properly nested within sections:
@@ -228,10 +180,3 @@ All content is properly nested within sections:
 }
 ```
 
-## License
-
-MIT
-
-## Version
-
-2.0 - Production Ready
