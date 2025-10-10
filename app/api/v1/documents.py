@@ -456,6 +456,118 @@ async def get_document(
         raise HTTPException(status_code=500, detail=f"Failed to retrieve document: {str(e)}")
 
 
+@router.get("/{document_id}/simplified")
+async def get_document_simplified(
+    document_id: str = PathParam(..., description="Document ID"),
+    storage: StorageService = Depends(get_storage_service),
+):
+    """
+    Get document in simplified, clean format.
+    
+    Returns structured components: sections, descriptions, metadata, questions, and answers.
+    Output format matches the exact specification:
+    - Each section has: title, descriptions, metadata, questions
+    - Questions have: question text and answer (if available)
+    - Root-level metadata is extracted separately
+    """
+    try:
+        # Fetch document with content
+        result = await storage.get_document_with_content(document_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Build simplified output matching user's exact specification
+        simplified = {}
+        
+        # Build sections with nested structure (matching user's format)
+        for section in result.sections:
+            section_key = section.title or f"Section {section.section_number or ''}"
+            
+            section_data = {
+                "type": "section",
+                "descriptions": []
+            }
+            
+            # Add descriptions (content split into paragraphs)
+            if section.content:
+                descriptions = [p.strip() for p in section.content.split('\n') if p.strip()]
+                section_data["descriptions"] = descriptions if descriptions else []
+            
+            # Add questions for this section (if any)
+            section_questions = [
+                qa for qa in result.qa_pairs
+                if hasattr(qa, 'section_id') and qa.section_id == section.id
+            ]
+            
+            if section_questions:
+                section_data["questions"] = [
+                    {
+                        "question": qa.question_text,
+                        "answer": qa.answer_text if qa.answer_text and qa.is_answered else None
+                    }
+                    for qa in section_questions
+                ]
+            
+            # Add section-specific metadata (if any)
+            section_metadata = [
+                m for m in result.metadata
+                if hasattr(m, 'section_id') and m.section_id == section.id
+            ]
+            
+            if section_metadata:
+                for m in section_metadata:
+                    section_data[m.key.lower().replace(' ', '_')] = m.value
+            
+            simplified[section_key] = section_data
+        
+        # Add root-level metadata (document-level metadata)
+        metadata_dict = {}
+        root_metadata = [
+            m for m in result.metadata
+            if not hasattr(m, 'section_id') or not m.section_id
+        ]
+        
+        for m in root_metadata:
+            key = m.key.lower().replace(' ', '_')
+            metadata_dict[key] = m.value
+        
+        if metadata_dict:
+            simplified["metadata"] = metadata_dict
+        
+        # Add root-level Q&A (questions not tied to a specific section)
+        root_qna = [
+            qa for qa in result.qa_pairs
+            if not hasattr(qa, 'section_id') or not qa.section_id
+        ]
+        
+        if root_qna:
+            # Add as separate entries or to a "Questions" section
+            questions_section = {
+                "type": "section",
+                "questions": [
+                    {
+                        "question": qa.question_text,
+                        "answer": qa.answer_text if qa.answer_text and qa.is_answered else None
+                    }
+                    for qa in root_qna
+                ]
+            }
+            
+            if questions_section["questions"]:
+                simplified["Questions"] = questions_section
+        
+        return simplified
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting simplified document {document_id}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/{document_id}/status", response_model=StatusResponse)
 async def get_document_status(
     document_id: str = PathParam(..., description="Document ID"),
@@ -1159,30 +1271,6 @@ async def export_document(
 # ============================================================================
 # ERROR HANDLERS
 # ============================================================================
-
-@router.exception_handler(HTTPException)
-async def http_exception_handler(request: Request, exc: HTTPException):
-    """Handle HTTP exceptions with consistent format."""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code,
-            "timestamp": datetime.now().isoformat()
-        }
-    )
-
-
-@router.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    """Handle general exceptions."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    )
+# Note: Exception handlers are registered in app/main.py
+# They cannot be attached to routers, only to the main FastAPI app
 

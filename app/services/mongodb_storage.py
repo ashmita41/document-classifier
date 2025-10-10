@@ -370,6 +370,15 @@ class MongoDBStorage:
             logger.error(f"Error updating status: {e}")
             raise MongoStorageError(f"Failed to update status: {e}")
     
+    async def update_status(
+        self,
+        document_id: str,
+        status: ProcessingStatus,
+        error_message: Optional[str] = None
+    ) -> None:
+        """Alias for update_document_status for compatibility."""
+        return await self.update_document_status(document_id, status, error_message)
+    
     # ========================================================================
     # SEARCH AND LIST OPERATIONS
     # ========================================================================

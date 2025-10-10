@@ -16,8 +16,13 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 from urllib.parse import urlparse
 
-import spacy
-from spacy.tokens import Doc
+try:
+    import spacy
+    from spacy.tokens import Doc
+    SPACY_AVAILABLE = True
+except ImportError:
+    SPACY_AVAILABLE = False
+    spacy = None
 
 from app.models.text_element import TextElement
 
@@ -165,7 +170,7 @@ class MetadataExtractor:
         self.enable_ner = enable_ner
         
         # Load spaCy model
-        if self.enable_ner:
+        if self.enable_ner and SPACY_AVAILABLE:
             try:
                 logger.info(f"Loading spaCy model: {spacy_model}")
                 self.nlp = spacy.load(spacy_model)
@@ -175,6 +180,9 @@ class MetadataExtractor:
                 self.enable_ner = False
                 self.nlp = None
         else:
+            if not SPACY_AVAILABLE:
+                logger.warning("spaCy not installed. NER disabled.")
+            self.enable_ner = False
             self.nlp = None
         
         logger.info("MetadataExtractor initialized")
