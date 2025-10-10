@@ -14,12 +14,18 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from app.models.text_element import TextElement
 
-
 logger = logging.getLogger(__name__)
+
+# Optional: sentence-transformers for semantic analysis
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    logger.warning("sentence-transformers not available. Semantic Q&A matching will be disabled.")
 
 
 class QuestionType(str, Enum):
@@ -163,9 +169,13 @@ class QADetector:
         self.max_answer_distance = max_answer_distance
         self.min_answer_length = min_answer_length
         
-        # Load sentence transformer
-        logger.info(f"Loading sentence transformer: {model_name}")
-        self.model = SentenceTransformer(model_name)
+        # Load sentence transformer if available
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.info(f"Loading sentence transformer: {model_name}")
+            self.model = SentenceTransformer(model_name)
+        else:
+            self.model = None
+            logger.warning("Semantic Q&A matching disabled - sentence-transformers not installed")
         
         logger.info("QADetector initialized")
     
@@ -434,6 +444,10 @@ class QADetector:
         questions: List[Tuple[TextElement, Optional[str], float]]
     ) -> Optional[Tuple[TextElement, float, str]]:
         """Find answer using semantic similarity."""
+        # Skip if model not available
+        if not self.model:
+            return None
+        
         question_elements = [q[0] for q in questions]
         
         # Encode question
