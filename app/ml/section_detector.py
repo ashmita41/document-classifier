@@ -15,12 +15,19 @@ from dataclasses import dataclass, field
 from collections import defaultdict
 
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from app.models.text_element import TextElement
 
 
 logger = logging.getLogger(__name__)
+
+# Optional: sentence-transformers for semantic analysis
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+    logger.warning("sentence-transformers not available. Semantic analysis will be disabled.")
 
 
 @dataclass
@@ -121,15 +128,20 @@ class SectionDetector:
         self.max_title_length = max_title_length
         self.debug = debug
         
-        # Load sentence transformer model
-        logger.info(f"Loading sentence transformer model: {model_name}")
-        self.model = SentenceTransformer(model_name)
-        
-        # Precompute embeddings for known section headings
-        self.section_embeddings = self.model.encode(
-            self.KNOWN_SECTION_HEADINGS,
-            show_progress_bar=False
-        )
+        # Load sentence transformer model (if available)
+        if SENTENCE_TRANSFORMERS_AVAILABLE:
+            logger.info(f"Loading sentence transformer model: {model_name}")
+            self.model = SentenceTransformer(model_name)
+            
+            # Precompute embeddings for known section headings
+            self.section_embeddings = self.model.encode(
+                self.KNOWN_SECTION_HEADINGS,
+                show_progress_bar=False
+            )
+        else:
+            self.model = None
+            self.section_embeddings = None
+            logger.warning("Semantic analysis disabled - sentence-transformers not installed")
         
         logger.info("SectionDetector initialized")
     
@@ -341,6 +353,10 @@ class SectionDetector:
     
     def _analyze_semantics(self, text: str) -> float:
         """Analyze semantic similarity to known sections."""
+        # Skip if model not available
+        if not self.model or not self.section_embeddings:
+            return 0.0
+        
         # Encode the text
         text_embedding = self.model.encode([text], show_progress_bar=False)[0]
         
