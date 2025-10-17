@@ -1,182 +1,234 @@
-# Document Classifier
+# Document Classifier API
 
-Intelligent PDF document parser that automatically extracts structured content from unstructured documents (RFPs, resumes, proposals, contracts).
+A document parsing system that uses both LLM-based and algorithmic approaches to extract structured information from any document type.
 
 ## Features
 
-- Automatic section detection with hierarchical nesting
-- Contextual metadata extraction (deadlines, contacts, references)
-- Question-answer pair detection
-- REST API with async processing
-- Web interface for document upload and analysis
+- **Document Support**: Resumes, RFPs, Proposals, Manuals, Reports
+- **Dual Parsing Engines**: LLM-powered and Algorithmic parsing
+- **Advanced Question Detection**: Intelligent question identification and extraction
+- **Robust PDF Processing**: Multiple extraction methods with fallbacks
+- **Production Ready**: FastAPI, CORS, Health checks, Error handling
+
+## Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- OpenAI API Key (for LLM parser)
+
+### Installation
+
+1. **Clone the repository**
+```bash
+git clone <repository-url>
+cd document-classifier
+```
+
+2. **Install dependencies**
+```bash
+pip install -r requirements.txt
+```
+
+3. **Set up environment**
+```bash
+# Copy and edit config file
+cp config.env.example config.env
+# Add your OpenAI API key
+echo "OPENAI_API_KEY=your_api_key_here" >> config.env
+```
+
+4. **Run the server**
+```bash
+uvicorn app.api:app --host 0.0.0.0 --port 8000
+```
 
 ## API Endpoints
 
-### Upload Document
-```http
-POST /api/v1/documents/upload
+### Health Check
+```bash
+GET /health
+```
+
+### LLM Parser (AI-powered)
+```bash
+# Upload file
+POST /parse
 Content-Type: multipart/form-data
+Body: file (PDF)
 
-Parameters:
-- file: PDF file (required)
-
-Response: 202 Accepted
-{
-  "id": "doc_abc123",
-  "filename": "document.pdf",
-  "status": "processing"
-}
+# Parse from file path
+POST /parse-file?file_path=/path/to/document.pdf
 ```
 
-### Get Analysis Results
-```http
-GET /api/v1/documents/{document_id}/simplified
-
-Response: 200 OK
-{
-  "Section Name": {
-    "type": "section",
-    "description": ["Full paragraph text..."],
-    "metadata": {
-      "deadline": "Oct 10, 2025",
-      "contact": "John Doe"
-    },
-    "questions": [
-      {
-        "question": "What is...?",
-        "answer": "The answer is..."
-      }
-    ],
-    "sub_sections": {
-      "Subsection Name": {
-        "type": "section",
-        "description": ["..."]
-      }
-    }
-  },
-  "metadata": {
-    "organization": "Company Name"
-  }
-}
-```
-
-### Check Status
-```http
-GET /api/v1/documents/{document_id}/status
-
-Response: 200 OK
-{
-  "id": "doc_abc123",
-  "status": "completed",
-  "filename": "document.pdf",
-  "created_at": "2025-10-10T12:00:00"
-}
-```
-
-### Get Sections Only
-```http
-GET /api/v1/documents/{document_id}/sections
-
-Response: 200 OK
-{
-  "sections": [
-    {
-      "title": "Section Name",
-      "level": 1,
-      "content": "..."
-    }
-  ]
-}
-```
-
-### Get Metadata Only
-```http
-GET /api/v1/documents/{document_id}/metadata
-
-Response: 200 OK
-{
-  "metadata": [
-    {
-      "key": "deadline",
-      "value": "Oct 10, 2025",
-      "type": "date"
-    }
-  ]
-}
-```
-
-### Get Q&A Pairs Only
-```http
-GET /api/v1/documents/{document_id}/qa
-
-Response: 200 OK
-{
-  "qa_pairs": [
-    {
-      "question": "What is...?",
-      "answer": "The answer is...",
-      "confidence": 0.95
-    }
-  ]
-}
-```
-## Project Structure
-
-```
-document-classifier/
-├── core/                    # Standalone analyzer
-│   ├── __init__.py
-│   └── document_analyzer_v2.py
-├── app/                     # FastAPI backend
-│   ├── api/v1/             # REST endpoints
-│   ├── ml/                 # ML components
-│   ├── services/           # Business logic
-│   └── models/             # Data models
-├── frontend/               # Web UI
-│   ├── index.html
-│   ├── app.js
-│   └── styles.css
-├── requirements.txt        # Python dependencies
-├── Dockerfile             # Container image
-└── docker-compose.yml     # Service orchestration
-```
-
-## Configuration
-
-Environment variables (`.env` file):
+### Universal Parser (Algorithmic)
 ```bash
-MONGODB_URI=mongodb://localhost:27017
-MONGODB_DB=document_classifier
-API_PORT=8000
-MAX_FILE_SIZE_MB=50
+# Upload file
+POST /parse-algorithmic
+Content-Type: multipart/form-data
+Body: file (PDF)
+
+# Parse from file path
+POST /parse-algorithmic-file?file_path=/path/to/document.pdf
 ```
 
-## Docker Deployment
+## Usage Examples
 
+### Python Client
+```python
+import requests
+
+# Upload and parse document
+with open('document.pdf', 'rb') as f:
+    response = requests.post(
+        'http://localhost:8000/parse',
+        files={'file': f}
+    )
+    result = response.json()
+
+# Parse from file path
+response = requests.post(
+    'http://localhost:8000/parse-algorithmic-file',
+    params={'file_path': '/path/to/document.pdf'}
+)
+result = response.json()
+```
+
+### cURL Examples
 ```bash
-# Start services
-docker-compose up -d
+# Health check
+curl http://localhost:8000/health
 
-# View logs
-docker-compose logs -f
+# Parse uploaded file
+curl -X POST -F "file=@document.pdf" http://localhost:8000/parse
 
-# Stop services
-docker-compose down
+# Parse from file path
+curl -X POST "http://localhost:8000/parse-algorithmic-file?file_path=/path/to/document.pdf"
 ```
 
-## Output Format
-
-All content is properly nested within sections:
+## Response Format
 
 ```json
 {
-  "Section Title": {
-    "type": "section",
-    "description": ["paragraph 1", "paragraph 2"],
-    "metadata": {"key": "value"},
-    "questions": [{"question": "...", "answer": "..."}],
-    "sub_sections": {...}
-  }
+  "document_metadata": {
+    "total_pages": 5,
+    "extraction_method": "pdfplumber",
+    "total_elements": 150,
+    "file_path": "document.pdf"
+  },
+  "metadata": {
+    "email": "contact@example.com",
+    "phone": "(555) 123-4567",
+    "url": "https://example.com"
+  },
+  "sections": [
+    {
+      "title": "Executive Summary",
+      "level": 1,
+      "content": [
+        "This document provides...",
+        "Key findings include..."
+      ],
+      "subsections": [
+        {
+          "title": "Key Metrics",
+          "level": 2,
+          "content": ["Revenue: $2.5M", "Growth: 15%"],
+          "subsections": [],
+          "metadata": {}
+        }
+      ],
+      "metadata": {}
+    }
+  ],
+  "content": [
+    "Standalone content blocks"
+  ]
 }
 ```
 
+## Architecture
+
+The system consists of two main parsing engines:
+
+### LLM Parser (GPT-4o-mini)
+- **Best for**: Complex documents requiring AI understanding
+- **Features**: Advanced text normalization, smart section detection, question detection
+- **Performance**: High accuracy, moderate speed, requires API key
+
+### Universal Parser (Algorithmic)
+- **Best for**: Any document type, production environments
+- **Features**: Pattern recognition, structure detection, content classification
+- **Performance**: Fast processing, no API dependencies, high reliability
+
+## Configuration
+
+### Environment Variables
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+### Server Configuration
+```python
+# app/api.py
+app = FastAPI(
+    title="Document Classifier API",
+    description="Intelligent document parsing system",
+    version="1.0.0"
+)
+```
+
+## Production Deployment
+
+### Docker Deployment
+```bash
+# Build image
+docker build -t document-classifier .
+
+# Run container
+docker run -p 8000:8000 -e OPENAI_API_KEY=your_key document-classifier
+```
+
+### Docker Compose
+```bash
+docker-compose up -d
+```
+
+### Environment Setup
+```bash
+# Production environment
+export OPENAI_API_KEY=your_production_key
+export ENVIRONMENT=production
+uvicorn app.api:app --host 0.0.0.0 --port 8000 --workers 4
+```
+
+## Monitoring
+
+### Health Checks
+```bash
+curl http://localhost:8000/health
+```
+
+### Logs
+- Application logs: Console output
+- Error tracking: FastAPI error handling
+- Processing metrics: Built-in logging
+
+## Error Handling
+
+The API returns appropriate HTTP status codes:
+
+- `200`: Success
+- `400`: Bad Request (invalid file type, missing parameters)
+- `404`: File Not Found
+- `422`: Validation Error
+- `500`: Internal Server Error
+
+## Security
+
+- **File Validation**: PDF files only
+- **CORS**: Configurable origins
+- **Input Sanitization**: Automatic cleanup
+- **Temporary Files**: Automatic cleanup after processing
+
+**Document Classifier API** - Intelligent document parsing for any use case.
