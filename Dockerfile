@@ -1,5 +1,4 @@
-# Production Dockerfile for Document Classification API
-
+# Production Dockerfile for LLM Document Parser
 FROM python:3.11-slim
 
 # Set working directory
@@ -9,6 +8,8 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
+    ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching
@@ -17,25 +18,22 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Download spaCy model
 # Copy application code
 COPY app/ ./app/
 
-# Create directories for uploads and logs
+# Create directories
 RUN mkdir -p uploads logs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
-ENV MONGODB_URI=""
-ENV API_PORT=8000
+ENV OPENAI_API_KEY=""
 
 # Expose port
 EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-  CMD python -c "import requests; requests.get('http://localhost:8000/health')" || exit 1
+  CMD curl -f http://localhost:8000/health || exit 1
 
 # Run the application
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "app.main_new:app", "--host", "0.0.0.0", "--port", "8000"]

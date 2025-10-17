@@ -1,12 +1,8 @@
-# Byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-
-# C extensions
 *.so
-
-# Distribution / packaging
 .Python
 build/
 develop-eggs/
@@ -20,158 +16,68 @@ parts/
 sdist/
 var/
 wheels/
-share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-PECL_INSTALL_VERSION
+MANIFEST
 
-# PyInstaller
-*.manifest
-*.spec
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.py,cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Translations
-*.mo
-*.pot
-
-# Django stuff:
-*.log
-local_settings.py
-db.sqlite3
-db.sqlite3-journal
-
-# Flask stuff:
-instance/
-.webassets-cache
-
-# Scrapy stuff:
-.scrapy
-
-# Sphinx documentation
-docs/_build/
-
-# PyBuilder
-.pybuilder/
-target/
-
-# Jupyter Notebook
-.ipynb_checkpoints
-
-# IPython
-profile_default/
-ipython_config.py
-
-# pyenv
-.python-version
-
-# pipenv
-Pipfile.lock
-
-# poetry
-poetry.lock
-
-# pdm
-.pdm.toml
-
-# PEP 582
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# SageMath parsed files
-*.sage.py
-
-# Environments
-.env
-.venv
-env/
+# Virtual Environment
 venv/
+env/
 ENV/
 env.bak/
 venv.bak/
 
-# Spyder project settings
-.spyderproject
-.spyproject
+# Environment Variables
+.env
+config.env
+*.env
 
-# Rope project settings
-.ropeproject
-
-# mkdocs documentation
-/site
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
-
-# Pyre type checker
-.pyre/
-
-# pytype static type analyzer
-.pytype/
-
-# Cython debug symbols
-cython_debug/
-
-# IDE
-.idea/
-.vscode/
-*.swp
-*.swo
-*~
-.DS_Store
-
-# Project specific
-uploads/
+# Logs
 logs/
-models/
-cache/
-*.db
-*.sqlite
+*.log
+
+# Temporary Files
+uploads/
 temp/
 tmp/
+*.tmp
 
-# ML models and data
-*.pkl
-*.h5
-*.model
-*.bin
-data/
-patterns_db.json
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Static files
-static/uploads/
+# OS
+.DS_Store
+Thumbs.db
 
-# Test and demo files (not for production)
+# Test Files
 test_*.py
-demo_*.py
-verify_*.py
-*_example.py
 *_test.py
-*_demo.py
-example_*.py
-sample_*.py
-MONGODB_SETUP.md
+simple_*.py
 
+# Documentation (keep only main ones)
+# ALGORITHMIC_PARSER_README.md
+# DEPLOYMENT_GUIDE.md
+# FINAL_GUIDE.md
+# QUICK_START_GUIDE.md
+# README_NEW.md
+# REFACTORING_SUMMARY.md
+# TESTING_GUIDE.md
+
+# Example Files
+example_*.py
+
+# Results and Output
+*.json
+enhanced_parser_test_result.json
+algorithmic_test_result.json
+server_test_result.json
+algorithmic_server_test_result.json
+original_parser_rfp_result.json
+algorithmic_parser_rfp_result.json
+
+# Docker
+.dockerignore

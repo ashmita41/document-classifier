@@ -1,16 +1,14 @@
 version: '3.8'
 
 services:
-  api:
-    build: .
-    container_name: document-classifier-api
+  document-parser:
+    build:
+      context: .
+      dockerfile: Dockerfile.new
     ports:
       - "8000:8000"
     environment:
-      - MONGODB_URI=${MONGODB_URI}
-      - API_PORT=8000
-      - MAX_FILE_SIZE_MB=50
-      - DEBUG=false
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
     volumes:
       - ./uploads:/app/uploads
       - ./logs:/app/logs
@@ -21,4 +19,3 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
-
