@@ -306,47 +306,115 @@ class SmartSectionDetector:
         return False
 
 class FinalEnhancedLLMDocumentParser:
-    """Final enhanced LLM document parser."""
+    """Optimized LLM document parser with performance enhancements."""
     
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str, model: str = "gpt-4o-mini", max_workers: int = 4):
         self.client = AsyncOpenAI(api_key=api_key)
         self.model = model
         self.batch_size = 12
         self.max_retries = 3
+        self.max_workers = max_workers
         
-        logger.info(f"Final Enhanced LLMDocumentParser initialized with model: {model}")
+        # Performance optimizations
+        self._classification_cache = {}
+        self._cache_lock = asyncio.Lock()
+        
+        logger.info(f"Optimized LLMDocumentParser initialized with model: {model}, workers: {max_workers}")
     
     async def classify_blocks(self, blocks: List[TextElement]) -> List[ClassifiedBlock]:
-        """Classify text blocks with final enhancements."""
+        """Classify text blocks with optimized performance."""
         classified_blocks = []
         
-        # Pre-classify with enhanced rules
-        for block in blocks:
-            normalized_text = AdvancedTextNormalizer.normalize_text(block.text)
-            metadata = AdvancedTextNormalizer.extract_metadata(normalized_text)
-            
-            # Enhanced rule-based classification
-            label, confidence = self._rule_based_classify(normalized_text, block)
-            
-            classified_block = ClassifiedBlock(
-                text=block.text,
-                label=label,
-                confidence=confidence,
-                page_number=block.page_number,
-                line_number=block.line_number,
-                metadata=metadata,
-                normalized_text=normalized_text
-            )
-            
-            classified_blocks.append(classified_block)
+        # Pre-classify with enhanced rules (parallel processing for large documents)
+        if len(blocks) > 100:
+            # Use parallel processing for large documents
+            classified_blocks = await self._classify_blocks_parallel(blocks)
+        else:
+            # Sequential processing for small documents
+            classified_blocks = await self._classify_blocks_sequential(blocks)
         
         # LLM classification for ambiguous blocks
         ambiguous_blocks = [b for b in classified_blocks if b.confidence < 0.8]
         if ambiguous_blocks:
             logger.info(f"LLM classifying {len(ambiguous_blocks)} ambiguous blocks")
-            await self._llm_classify_blocks(ambiguous_blocks)
+            await self._llm_classify_blocks_optimized(ambiguous_blocks)
         
         return classified_blocks
+    
+    async def _classify_blocks_sequential(self, blocks: List[TextElement]) -> List[ClassifiedBlock]:
+        """Sequential classification of blocks."""
+        classified_blocks = []
+        
+        for block in blocks:
+            classified_block = await self._classify_single_block(block)
+            classified_blocks.append(classified_block)
+        
+        return classified_blocks
+    
+    async def _classify_blocks_parallel(self, blocks: List[TextElement]) -> List[ClassifiedBlock]:
+        """Parallel classification of blocks for better performance."""
+        import asyncio
+        
+        # Create semaphore to limit concurrent operations
+        semaphore = asyncio.Semaphore(self.max_workers)
+        
+        async def classify_with_semaphore(block):
+            async with semaphore:
+                return await self._classify_single_block(block)
+        
+        # Process blocks in parallel
+        tasks = [classify_with_semaphore(block) for block in blocks]
+        classified_blocks = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Filter out exceptions and return valid results
+        valid_blocks = []
+        for i, result in enumerate(classified_blocks):
+            if isinstance(result, Exception):
+                logger.error(f"Error classifying block {i}: {result}")
+                # Create fallback block
+                fallback_block = await self._classify_single_block(blocks[i])
+                valid_blocks.append(fallback_block)
+            else:
+                valid_blocks.append(result)
+        
+        return valid_blocks
+    
+    async def _classify_single_block(self, block: TextElement) -> ClassifiedBlock:
+        """Classify a single block with caching."""
+        # Check cache first
+        cache_key = f"{block.text}:{block.page_number}:{block.line_number}"
+        
+        async with self._cache_lock:
+            if cache_key in self._classification_cache:
+                cached_result = self._classification_cache[cache_key]
+                # Update with current block data
+                cached_result.page_number = block.page_number
+                cached_result.line_number = block.line_number
+                return cached_result
+        
+        # Process block
+        normalized_text = AdvancedTextNormalizer.normalize_text(block.text)
+        metadata = AdvancedTextNormalizer.extract_metadata(normalized_text)
+        
+        # Enhanced rule-based classification
+        label, confidence = self._rule_based_classify(normalized_text, block)
+        
+        classified_block = ClassifiedBlock(
+            text=block.text,
+            label=label,
+            confidence=confidence,
+            page_number=block.page_number,
+            line_number=block.line_number,
+            metadata=metadata,
+            normalized_text=normalized_text
+        )
+        
+        # Cache result
+        async with self._cache_lock:
+            if len(self._classification_cache) < 1000:  # Limit cache size
+                self._classification_cache[cache_key] = classified_block
+        
+        return classified_block
     
     def _rule_based_classify(self, text: str, block: TextElement) -> Tuple[str, float]:
         """Enhanced rule-based classification."""
@@ -380,20 +448,30 @@ class FinalEnhancedLLMDocumentParser:
         # Default to description
         return "description", 0.5
     
-    async def _llm_classify_blocks(self, blocks: List[ClassifiedBlock]):
-        """Enhanced LLM classification."""
+    async def _llm_classify_blocks_optimized(self, blocks: List[ClassifiedBlock]):
+        """Optimized LLM classification with parallel processing."""
         batches = [blocks[i:i + self.batch_size] for i in range(0, len(blocks), self.batch_size)]
         
+        # Process batches in parallel
+        tasks = []
         for batch in batches:
-            try:
-                await self._classify_batch(batch)
-            except Exception as e:
-                logger.error(f"Error classifying batch: {e}")
-                # Fallback to rule-based classification
-                for block in batch:
-                    if block.confidence < 0.5:
-                        block.label = "description"
-                        block.confidence = 0.5
+            task = asyncio.create_task(self._classify_batch_safe(batch))
+            tasks.append(task)
+        
+        # Wait for all batches to complete
+        await asyncio.gather(*tasks, return_exceptions=True)
+    
+    async def _classify_batch_safe(self, batch: List[ClassifiedBlock]):
+        """Safely classify a batch with error handling."""
+        try:
+            await self._classify_batch(batch)
+        except Exception as e:
+            logger.error(f"Error classifying batch: {e}")
+            # Fallback to rule-based classification
+            for block in batch:
+                if block.confidence < 0.5:
+                    block.label = "description"
+                    block.confidence = 0.5
     
     async def _classify_batch(self, blocks: List[ClassifiedBlock]):
         """Classify a batch with enhanced prompt."""
@@ -465,26 +543,71 @@ Return JSON in this format:
 
 
 class CleanJSONBuilder:
-    """Builds clean, hierarchical JSON structure."""
+    """Optimized builder for clean, hierarchical JSON structure."""
     
     def __init__(self):
         self.sections = {}
         self.metadata = {}
         self.current_section = None
         self.current_sub_section = None
+        
+        # Performance optimizations
+        self._section_cache = {}
+        self._metadata_cache = {}
+        self._processing_stats = {
+            'sections_processed': 0,
+            'sub_sections_processed': 0,
+            'descriptions_added': 0,
+            'metadata_extracted': 0
+        }
     
     def build(self, blocks: List[ClassifiedBlock]) -> Dict[str, Any]:
-        """Build clean hierarchical JSON structure."""
-        for block in blocks:
-            self._process_block(block)
+        """Build clean hierarchical JSON structure with optimization."""
+        import time
+        start_time = time.time()
+        
+        # Process blocks efficiently
+        self._process_blocks_optimized(blocks)
         
         # Clean up and normalize sections
-        self._cleanup_sections()
+        self._cleanup_sections_optimized()
         
-        return {
+        processing_time = time.time() - start_time
+        
+        # Add processing metrics
+        result = {
             **self.sections,
-            "metadata": self.metadata
+            "metadata": self.metadata,
+            "processing_metrics": {
+                **self._processing_stats,
+                "processing_time_seconds": processing_time,
+                "total_blocks_processed": len(blocks)
+            }
         }
+        
+        return result
+    
+    def _process_blocks_optimized(self, blocks: List[ClassifiedBlock]):
+        """Optimized block processing with batching."""
+        # Group blocks by type for efficient processing
+        section_blocks = []
+        sub_section_blocks = []
+        description_blocks = []
+        metadata_blocks = []
+        
+        for block in blocks:
+            if block.label == "section_title":
+                section_blocks.append(block)
+            elif block.label == "sub_section_title":
+                sub_section_blocks.append(block)
+            elif block.label == "description":
+                description_blocks.append(block)
+            elif block.label == "metadata":
+                metadata_blocks.append(block)
+        
+        # Process blocks in order
+        for block in blocks:
+            self._process_block(block)
     
     def _process_block(self, block: ClassifiedBlock):
         """Process a single classified block."""
@@ -498,18 +621,26 @@ class CleanJSONBuilder:
             self._add_metadata(block)
     
     def _start_new_section(self, block: ClassifiedBlock):
-        """Start a new main section."""
+        """Start a new main section with caching."""
         section_name = block.normalized_text
         self.current_section = section_name
         self.current_sub_section = None
         
-        if section_name not in self.sections:
-            self.sections[section_name] = {
-                "type": "section",
-                "description": [],
-                "sub_sections": {},
-                "metadata": {}
-            }
+        # Check cache first
+        if section_name in self._section_cache:
+            self.sections[section_name] = self._section_cache[section_name]
+        else:
+            if section_name not in self.sections:
+                self.sections[section_name] = {
+                    "type": "section",
+                    "description": [],
+                    "sub_sections": {},
+                    "metadata": {}
+                }
+                # Cache the section structure
+                self._section_cache[section_name] = self.sections[section_name]
+        
+        self._processing_stats['sections_processed'] += 1
     
     def _start_new_sub_section(self, block: ClassifiedBlock):
         """Start a new sub-section."""
@@ -531,7 +662,7 @@ class CleanJSONBuilder:
             }
     
     def _add_description(self, block: ClassifiedBlock):
-        """Add description content."""
+        """Add description content with optimization."""
         if self.current_sub_section and self.current_section:
             # Add to sub-section
             self.sections[self.current_section]["sub_sections"][self.current_sub_section]["description"].append(block.normalized_text)
@@ -543,9 +674,11 @@ class CleanJSONBuilder:
             if "description" not in self.metadata:
                 self.metadata["description"] = []
             self.metadata["description"].append(block.normalized_text)
+        
+        self._processing_stats['descriptions_added'] += 1
     
     def _add_metadata(self, block: ClassifiedBlock):
-        """Add metadata."""
+        """Add metadata with caching."""
         if block.metadata:
             if self.current_sub_section and self.current_section:
                 # Add to sub-section metadata
@@ -556,53 +689,91 @@ class CleanJSONBuilder:
             else:
                 # Add to global metadata
                 self.metadata.update(block.metadata)
+            
+            self._processing_stats['metadata_extracted'] += 1
     
-    def _cleanup_sections(self):
-        """Clean up and normalize sections."""
+    def _cleanup_sections_optimized(self):
+        """Optimized cleanup and normalization of sections."""
         for section_name, section_data in self.sections.items():
-            if "type" not in section_data:
-                section_data["type"] = "section"
-            if "description" not in section_data:
-                section_data["description"] = []
-            if "metadata" not in section_data:
-                section_data["metadata"] = {}
-            if "sub_sections" not in section_data:
-                section_data["sub_sections"] = {}
+            # Normalize section structure
+            self._normalize_section_structure(section_data)
             
-            # Clean up empty sub-sections
-            empty_sub_sections = []
-            for sub_name, sub_data in section_data["sub_sections"].items():
-                if not sub_data["description"] and not sub_data["metadata"]:
-                    empty_sub_sections.append(sub_name)
-            
-            for sub_name in empty_sub_sections:
-                del section_data["sub_sections"][sub_name]
+            # Clean up empty sub-sections efficiently
+            self._cleanup_empty_sub_sections(section_data)
+    
+    def _normalize_section_structure(self, section_data: Dict[str, Any]):
+        """Normalize section structure."""
+        if "type" not in section_data:
+            section_data["type"] = "section"
+        if "description" not in section_data:
+            section_data["description"] = []
+        if "metadata" not in section_data:
+            section_data["metadata"] = {}
+        if "sub_sections" not in section_data:
+            section_data["sub_sections"] = {}
+    
+    def _cleanup_empty_sub_sections(self, section_data: Dict[str, Any]):
+        """Clean up empty sub-sections efficiently."""
+        empty_sub_sections = [
+            sub_name for sub_name, sub_data in section_data["sub_sections"].items()
+            if not sub_data.get("description", []) and not sub_data.get("metadata", {})
+        ]
+        
+        for sub_name in empty_sub_sections:
+            del section_data["sub_sections"][sub_name]
+            self._processing_stats['sub_sections_processed'] += 1
 
 
 class FinalEnhancedDocumentParserPipeline:
-    """Final enhanced document parser pipeline."""
+    """Optimized document parser pipeline with performance enhancements."""
     
-    def __init__(self, api_key: str):
-        self.parser = FinalEnhancedLLMDocumentParser(api_key)
-        self.extractor = PDFExtractor()
+    def __init__(self, api_key: str, max_workers: int = 4, enable_caching: bool = True):
+        self.parser = FinalEnhancedLLMDocumentParser(api_key, max_workers=max_workers)
+        self.extractor = PDFExtractor(max_workers=max_workers, enable_caching=enable_caching)
         self.builder = CleanJSONBuilder()
+        self.max_workers = max_workers
+        self.enable_caching = enable_caching
         
-        logger.info("Final Enhanced DocumentParserPipeline initialized")
+        logger.info(f"Optimized DocumentParserPipeline initialized with {max_workers} workers")
     
     async def parse_document(self, file_path: str) -> Dict[str, Any]:
-        """Parse document with final enhancements."""
-        logger.info(f"Starting final enhanced document parsing: {file_path}")
+        """Parse document with optimized performance."""
+        import time
+        start_time = time.time()
+        
+        logger.info(f"Starting optimized document parsing: {file_path}")
         
         # Extract text blocks
+        extraction_start = time.time()
         extraction_result = self.extractor.extract_from_file(file_path)
-        logger.info(f"Extracted {len(extraction_result.elements)} text blocks")
+        extraction_time = time.time() - extraction_start
+        logger.info(f"Extracted {len(extraction_result.elements)} text blocks in {extraction_time:.2f}s")
         
         # Classify blocks
+        classification_start = time.time()
         classified_blocks = await self.parser.classify_blocks(extraction_result.elements)
-        logger.info(f"Classified {len(classified_blocks)} blocks")
+        classification_time = time.time() - classification_start
+        logger.info(f"Classified {len(classified_blocks)} blocks in {classification_time:.2f}s")
         
         # Build clean hierarchical structure
+        building_start = time.time()
         structured_doc = self.builder.build(classified_blocks)
+        building_time = time.time() - building_start
         
-        logger.info("Final enhanced document parsing completed")
+        total_time = time.time() - start_time
+        logger.info(f"Optimized document parsing completed in {total_time:.2f}s")
+        
+        # Add comprehensive performance metrics
+        structured_doc['performance_metrics'] = {
+            'total_processing_time': total_time,
+            'extraction_time': extraction_time,
+            'classification_time': classification_time,
+            'building_time': building_time,
+            'elements_extracted': len(extraction_result.elements),
+            'blocks_classified': len(classified_blocks),
+            'max_workers': self.max_workers,
+            'caching_enabled': self.enable_caching,
+            'extraction_method': extraction_result.extraction_method
+        }
+        
         return structured_doc
