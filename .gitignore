@@ -19,29 +19,11 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-MANIFEST
 
-# Virtual Environment
+# Virtual environments
 venv/
 env/
 ENV/
-env.bak/
-venv.bak/
-
-# Environment Variables
-.env
-config.env
-*.env
-
-# Logs
-logs/
-*.log
-
-# Temporary Files
-uploads/
-temp/
-tmp/
-*.tmp
 
 # IDE
 .vscode/
@@ -53,31 +35,8 @@ tmp/
 .DS_Store
 Thumbs.db
 
-# Test Files
-test_*.py
-*_test.py
-simple_*.py
-
-# Documentation (keep only main ones)
-# ALGORITHMIC_PARSER_README.md
-# DEPLOYMENT_GUIDE.md
-# FINAL_GUIDE.md
-# QUICK_START_GUIDE.md
-# README_NEW.md
-# REFACTORING_SUMMARY.md
-# TESTING_GUIDE.md
-
-# Example Files
-example_*.py
-
-# Results and Output
+# Project specific
+uploads/
+*.pdf
 *.json
-enhanced_parser_test_result.json
-algorithmic_test_result.json
-server_test_result.json
-algorithmic_server_test_result.json
-original_parser_rfp_result.json
-algorithmic_parser_rfp_result.json
-
-# Docker
-.dockerignore
+test_*.py
