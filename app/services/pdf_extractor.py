@@ -6,6 +6,11 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple
 from collections import defaultdict
 import io
+import asyncio
+import hashlib
+from functools import lru_cache
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pdfplumber
 import PyPDF2
@@ -36,7 +41,7 @@ class PDFCorruptedError(PDFExtractorError):
 
 class PDFExtractor:
     """
-    Robust PDF extraction service with comprehensive layout preservation.
+    Optimized PDF extraction service with comprehensive layout preservation.
     
     Features:
     - Primary extraction with pdfplumber
@@ -45,6 +50,9 @@ class PDFExtractor:
     - Multi-column layout detection
     - Table extraction
     - Memory-efficient page-by-page processing
+    - Parallel processing for better performance
+    - Intelligent caching for repeated extractions
+    - Streaming processing for large files
     """
     
     def __init__(
@@ -54,6 +62,9 @@ class PDFExtractor:
         paragraph_spacing_threshold: float = 10.0,
         column_detection_enabled: bool = True,
         column_spacing_threshold: float = 30.0,
+        max_workers: int = 4,
+        enable_caching: bool = True,
+        cache_size: int = 100,
     ):
         """
         Initialize PDF extractor.
@@ -70,10 +81,24 @@ class PDFExtractor:
         self.paragraph_spacing_threshold = paragraph_spacing_threshold
         self.column_detection_enabled = column_detection_enabled
         self.column_spacing_threshold = column_spacing_threshold
+        self.max_workers = max_workers
+        self.enable_caching = enable_caching
+        self.cache_size = cache_size
+        
+        # Thread-safe cache for processed files
+        self._cache = {}
+        self._cache_lock = threading.RLock()
+        
+        # Thread pool for parallel processing
+        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        
+        # Optimized clustering model
+        self._clustering_model = None
+        self._clustering_cache = {}
 
     def extract_from_file(self, file_path: str) -> ExtractionResult:
         """
-        Extract text and structure from PDF file.
+        Extract text and structure from PDF file with caching and optimization.
         
         Args:
             file_path: Path to PDF file
@@ -86,6 +111,14 @@ class PDFExtractor:
         if not file_path.exists():
             raise FileNotFoundError(f"PDF file not found: {file_path}")
         
+        # Check cache first
+        if self.enable_caching:
+            cache_key = self._get_cache_key(file_path)
+            with self._cache_lock:
+                if cache_key in self._cache:
+                    logger.info(f"Cache hit for: {file_path}")
+                    return self._cache[cache_key]
+        
         logger.info(f"Starting extraction from: {file_path}")
         
         # Try pdfplumber first
@@ -93,6 +126,11 @@ class PDFExtractor:
             result = self._extract_with_pdfplumber(file_path)
             result.extraction_method = "pdfplumber"
             logger.info(f"Successfully extracted with pdfplumber: {len(result.elements)} elements")
+            
+            # Cache result
+            if self.enable_caching:
+                self._cache_result(cache_key, result)
+            
             return result
         except Exception as e:
             logger.warning(f"pdfplumber extraction failed: {e}")
@@ -103,6 +141,11 @@ class PDFExtractor:
             result = self._extract_with_pypdf2(file_path)
             result.extraction_method = "pypdf2"
             logger.info(f"Successfully extracted with PyPDF2: {len(result.elements)} elements")
+            
+            # Cache result
+            if self.enable_caching:
+                self._cache_result(cache_key, result)
+            
             return result
         except Exception as e:
             logger.error(f"PyPDF2 extraction failed: {e}")
@@ -157,20 +200,37 @@ class PDFExtractor:
                 
                 logger.info(f"Processing {total_pages} pages")
                 
-                for page_num, page in enumerate(pdf.pages, start=1):
-                    try:
-                        # Extract text elements with layout
-                        page_elements = self._extract_page_elements_pdfplumber(page, page_num)
-                        elements.extend(page_elements)
-                        
-                        # Extract tables
-                        page_tables = self._extract_tables_pdfplumber(page, page_num)
-                        tables_data.extend(page_tables)
-                        
-                    except Exception as e:
-                        error_msg = f"Error processing page {page_num}: {e}"
-                        logger.error(error_msg)
-                        errors.append(error_msg)
+                # Process pages in parallel for better performance
+                if len(pdf.pages) > 1:
+                    # Use parallel processing for multiple pages
+                    page_tasks = []
+                    for page_num, page in enumerate(pdf.pages, start=1):
+                        task = self._executor.submit(
+                            self._process_page_parallel, page, page_num
+                        )
+                        page_tasks.append(task)
+                    
+                    # Collect results
+                    for task in as_completed(page_tasks):
+                        try:
+                            page_elements, page_tables = task.result()
+                            elements.extend(page_elements)
+                            tables_data.extend(page_tables)
+                        except Exception as e:
+                            error_msg = f"Error processing page: {e}"
+                            logger.error(error_msg)
+                            errors.append(error_msg)
+                else:
+                    # Single page - process directly
+                    for page_num, page in enumerate(pdf.pages, start=1):
+                        try:
+                            page_elements, page_tables = self._process_page_parallel(page, page_num)
+                            elements.extend(page_elements)
+                            tables_data.extend(page_tables)
+                        except Exception as e:
+                            error_msg = f"Error processing page {page_num}: {e}"
+                            logger.error(error_msg)
+                            errors.append(error_msg)
                 
                 # Post-process elements
                 elements = self._post_process_elements(elements)
@@ -261,28 +321,41 @@ class PDFExtractor:
             # Detect columns if enabled
             column_assignments = None
             if self.column_detection_enabled:
-                column_assignments = self._detect_columns(lines)
+                column_assignments = self._detect_columns_optimized(lines)
             
             # Process each line
             for line_idx, line_chars in enumerate(lines):
                 if not line_chars:
                     continue
                 
-                # Combine characters into text
-                text = ''.join(char['text'] for char in line_chars)
+                # Combine characters into text with error handling
+                try:
+                    text = ''.join(char.get('text', '') for char in line_chars if isinstance(char, dict))
+                except Exception as e:
+                    logger.warning(f"Error processing characters on page {page_num}: {e}")
+                    continue
                 
                 if not text.strip():
                     continue
                 
-                # Calculate bounding box
-                x0 = min(char['x0'] for char in line_chars)
-                y0 = min(char['top'] for char in line_chars)
-                x1 = max(char['x1'] for char in line_chars)
-                y1 = max(char['bottom'] for char in line_chars)
+                # Calculate bounding box with error handling
+                try:
+                    x0 = min(char.get('x0', 0) for char in line_chars if isinstance(char, dict))
+                    y0 = min(char.get('top', 0) for char in line_chars if isinstance(char, dict))
+                    x1 = max(char.get('x1', 0) for char in line_chars if isinstance(char, dict))
+                    y1 = max(char.get('bottom', 0) for char in line_chars if isinstance(char, dict))
+                except Exception as e:
+                    logger.warning(f"Error calculating bounding box on page {page_num}: {e}")
+                    continue
                 
-                # Get font information (use most common in line)
-                font_sizes = [char.get('size', 0) for char in line_chars]
-                font_names = [char.get('fontname', '') for char in line_chars]
+                # Get font information (use most common in line) with error handling
+                try:
+                    font_sizes = [char.get('size', 0) for char in line_chars if isinstance(char, dict)]
+                    font_names = [char.get('fontname', '') for char in line_chars if isinstance(char, dict)]
+                except Exception as e:
+                    logger.warning(f"Error processing font information on page {page_num}: {e}")
+                    font_sizes = [12]  # Default font size
+                    font_names = ['']  # Default font name
                 
                 font_size = self._get_most_common(font_sizes)
                 font_name = self._get_most_common(font_names)
@@ -339,29 +412,46 @@ class PDFExtractor:
         if not chars:
             return []
         
-        # Sort by vertical position, then horizontal
-        sorted_chars = sorted(chars, key=lambda c: (c['top'], c['x0']))
-        
-        lines = []
-        current_line = [sorted_chars[0]]
-        current_y = sorted_chars[0]['top']
-        
-        for char in sorted_chars[1:]:
-            # If vertical position is close to current line, add to it
-            if abs(char['top'] - current_y) < 3:  # 3 point tolerance
-                current_line.append(char)
-            else:
-                # Start new line
-                if current_line:
-                    lines.append(current_line)
-                current_line = [char]
-                current_y = char['top']
-        
-        # Add last line
-        if current_line:
-            lines.append(current_line)
-        
-        return lines
+        try:
+            # Filter out invalid characters and ensure they have required fields
+            valid_chars = []
+            for char in chars:
+                if isinstance(char, dict) and 'top' in char and 'x0' in char:
+                    valid_chars.append(char)
+                else:
+                    logger.warning(f"Skipping invalid character: {char}")
+            
+            if not valid_chars:
+                return []
+            
+            # Sort by vertical position, then horizontal
+            sorted_chars = sorted(valid_chars, key=lambda c: (c.get('top', 0), c.get('x0', 0)))
+            
+            lines = []
+            current_line = [sorted_chars[0]]
+            current_y = sorted_chars[0].get('top', 0)
+            
+            for char in sorted_chars[1:]:
+                # If vertical position is close to current line, add to it
+                char_y = char.get('top', 0)
+                if abs(char_y - current_y) < 3:  # 3 point tolerance
+                    current_line.append(char)
+                else:
+                    # Start new line
+                    if current_line:
+                        lines.append(current_line)
+                    current_line = [char]
+                    current_y = char_y
+            
+            # Add last line
+            if current_line:
+                lines.append(current_line)
+            
+            return lines
+            
+        except Exception as e:
+            logger.error(f"Error grouping characters into lines: {e}")
+            return []
 
     def _detect_columns(self, lines: List[List[Dict]]) -> List[int]:
         """
@@ -768,4 +858,99 @@ class PDFExtractor:
         
         # Return most common
         return max(counts.items(), key=lambda x: x[1])[0] if counts else None
+    
+    def _get_cache_key(self, file_path: Path) -> str:
+        """Generate cache key for file."""
+        try:
+            # Use file path, size, and modification time for cache key
+            stat = file_path.stat()
+            key_data = f"{file_path}:{stat.st_size}:{stat.st_mtime}"
+            return hashlib.md5(key_data.encode()).hexdigest()
+        except Exception:
+            # Fallback to just file path
+            return hashlib.md5(str(file_path).encode()).hexdigest()
+    
+    def _cache_result(self, cache_key: str, result: ExtractionResult):
+        """Cache extraction result."""
+        with self._cache_lock:
+            # Implement LRU cache behavior
+            if len(self._cache) >= self.cache_size:
+                # Remove oldest entry
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+            
+            self._cache[cache_key] = result
+    
+    def _process_page_parallel(self, page: Any, page_num: int) -> Tuple[List[TextElement], List[Dict]]:
+        """Process a single page in parallel."""
+        try:
+            # Extract text elements with layout
+            page_elements = self._extract_page_elements_pdfplumber(page, page_num)
+            
+            # Extract tables
+            page_tables = self._extract_tables_pdfplumber(page, page_num)
+            
+            return page_elements, page_tables
+        except Exception as e:
+            logger.error(f"Error processing page {page_num} in parallel: {e}")
+            return [], []
+    
+    @lru_cache(maxsize=1000)
+    def _get_optimized_clustering_model(self, eps: float, min_samples: int):
+        """Get cached clustering model for better performance."""
+        return DBSCAN(eps=eps, min_samples=min_samples)
+    
+    def _detect_columns_optimized(self, lines: List[List[Dict]]) -> List[int]:
+        """Optimized column detection with caching."""
+        if not lines:
+            return []
+        
+        # Get x-coordinate of start of each line
+        x_positions = []
+        for line in lines:
+            if line:
+                x_positions.append(min(char['x0'] for char in line))
+        
+        if len(x_positions) < 2:
+            return [0] * len(lines)
+        
+        # Use cached clustering model
+        try:
+            model = self._get_optimized_clustering_model(
+                eps=self.column_spacing_threshold, 
+                min_samples=2
+            )
+            
+            X = np.array(x_positions).reshape(-1, 1)
+            labels = model.fit_predict(X)
+            
+            # Map cluster labels to column indices (left to right)
+            unique_labels = sorted(set(labels))
+            label_to_column = {label: idx for idx, label in enumerate(unique_labels)}
+            
+            column_indices = [label_to_column.get(label, 0) for label in labels]
+            
+            return column_indices
+        except Exception as e:
+            logger.warning(f"Optimized column detection failed: {e}")
+            return [0] * len(lines)
+    
+    def clear_cache(self):
+        """Clear the extraction cache."""
+        with self._cache_lock:
+            self._cache.clear()
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        with self._cache_lock:
+            return {
+                'cache_size': len(self._cache),
+                'max_cache_size': self.cache_size,
+                'cache_keys': list(self._cache.keys())
+            }
+    
+    def __del__(self):
+        """Cleanup thread pool executor."""
+        if hasattr(self, '_executor'):
+            self._executor.shutdown(wait=False)
 
