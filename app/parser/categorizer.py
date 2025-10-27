@@ -54,7 +54,7 @@ class DocumentCategorizer:
         
         Args:
             lines: List of line dictionaries with text and formatting info
-            sections: List of detected sections
+            sections: List of detected sections with hierarchy
             questions: List of detected questions
             metadata: Extracted metadata
             
@@ -64,7 +64,7 @@ class DocumentCategorizer:
         if not lines:
             return DocumentStructure({}, {}, [], [], {})
         
-        logger.info(f"Starting document categorization with {len(lines)} lines, {len(sections)} sections, {len(questions)} questions")
+        logger.info(f"Starting hierarchical document categorization with {len(lines)} lines, {len(sections)} sections, {len(questions)} questions")
         
         # Create maps for quick lookup
         section_map = {s.get('line_index', 0): s for s in sections}
@@ -73,32 +73,89 @@ class DocumentCategorizer:
         # Initialize document structure
         document_info = self._build_document_info(lines, metadata)
         preamble = []
-        sections_list = []
-        current_section = None
-        current_section_content = []
-        current_subsection = None
         
-        # Process each line
-        for i, line in enumerate(lines):
+        # Build hierarchical sections with proper content assignment
+        sections_list = self._build_hierarchical_sections(lines, sections, questions)
+        
+        # Build statistics
+        statistics = self._build_statistics(lines, sections_list, questions, preamble)
+        
+        return DocumentStructure(
+            document_info=document_info,
+            metadata=metadata,
+            preamble=preamble,
+            sections=sections_list,
+            statistics=statistics
+        )
+    
+    def _build_hierarchical_sections(self, lines: List[Dict[str, Any]], 
+                                   sections: List[Any], 
+                                   questions: List[Any]) -> List[Dict[str, Any]]:
+        """Build hierarchical sections with proper content assignment."""
+        if not sections:
+            return []
+        
+        # Sort sections by line index
+        sorted_sections = sorted(sections, key=lambda s: s.get('line_index', 0))
+        
+        # Create section objects with hierarchy
+        section_objects = []
+        for section in sorted_sections:
+            section_obj = {
+                "id": section.get('id', ''),
+                "title": section.get('title', ''),
+                "level": section.get('level', 1),
+                "parent_id": section.get('parent_id'),
+                "children": [],
+                "content": [],
+                "page": section.get('page_number', 1),
+                "confidence": section.get('confidence', 'medium'),
+                "type": "section"
+            }
+            section_objects.append(section_obj)
+        
+        # Assign content to sections
+        for i, section in enumerate(section_objects):
+            # Find the next section of same or higher level
+            next_section_index = len(lines)
+            for j in range(i + 1, len(section_objects)):
+                if section_objects[j]['level'] <= section['level']:
+                    next_section_index = section_objects[j].get('line_index', len(lines))
+                    break
+            
+            # Collect content between current section and next section
+            content = self._collect_section_content(
+                lines, 
+                section.get('line_index', 0) + 1, 
+                next_section_index, 
+                questions
+            )
+            section['content'] = content
+        
+        # Build parent-child relationships
+        self._build_parent_child_relationships(section_objects)
+        
+        # Return only top-level sections (level 1)
+        return [s for s in section_objects if s['level'] == 1]
+    
+    def _collect_section_content(self, lines: List[Dict[str, Any]], 
+                               start_index: int, 
+                               end_index: int, 
+                               questions: List[Any]) -> List[Dict[str, Any]]:
+        """Collect content for a section between start and end indices."""
+        content = []
+        question_map = {q.get('line_index', 0): q for q in questions}
+        
+        for i in range(start_index, min(end_index, len(lines))):
+            line = lines[i]
             text = line.get('text', '').strip()
             
-            # Skip empty lines
+            # Skip empty lines and noise
             if not text or len(text) < 3:
                 continue
             
-            # Check if this is a section header
-            if i in section_map:
-                # Save previous section if exists
-                if current_section:
-                    current_section['content'] = current_section_content
-                    sections_list.append(current_section)
-                
-                # Start new section
-                current_section = section_map[i].copy()
-                current_section['type'] = 'section'
-                current_section['page'] = line.get('page_number', 1)
-                current_section_content = []
-                current_subsection = None
+            # Skip metadata lines
+            if self._is_metadata_line(text):
                 continue
             
             # Check if this is a question
@@ -111,70 +168,32 @@ class DocumentCategorizer:
                     "number": question_obj.get('question_number', ''),
                     "confidence": question_obj.get('confidence', 'medium')
                 }
-                
-                if current_subsection:
-                    # Add to current subsection
-                    current_section_content.append(question_item)
-                elif current_section:
-                    current_section_content.append(question_item)
-                else:
-                    preamble.append(question_item)
-                continue
-            
-            # Check if metadata line (skip in content)
-            if self._is_metadata_line(text):
-                continue
-            
-            # Check if subsection
-            subsection_info = self._detect_subsection(text, i, line)
-            if subsection_info:
-                # Save previous subsection if exists
-                if current_subsection and current_section:
-                    current_section_content.append(current_subsection)
-                
-                # Start new subsection
-                current_subsection = {
-                    "type": "subsection",
-                    "title": subsection_info['title'],
-                    "page": line.get('page_number', 1),
-                    "content": []
-                }
-                continue
-            
-            # Otherwise, it's a description
-            description_item = {
-                "type": "description",
-                "text": text,
-                "page": line.get('page_number', 1)
-            }
-            
-            if current_subsection:
-                # Add to current subsection
-                current_subsection['content'].append(description_item)
-            elif current_section:
-                current_section_content.append(description_item)
+                content.append(question_item)
             else:
-                preamble.append(description_item)
+                # Regular content
+                content_item = {
+                    "type": "description",
+                    "text": text,
+                    "page": line.get('page_number', 1)
+                }
+                content.append(content_item)
         
-        # Add final subsection if exists
-        if current_subsection and current_section:
-            current_section_content.append(current_subsection)
+        return content
+    
+    def _build_parent_child_relationships(self, sections: List[Dict[str, Any]]) -> None:
+        """Build parent-child relationships between sections."""
+        # Create a map of sections by ID
+        section_map = {s['id']: s for s in sections}
         
-        # Add final section if exists
-        if current_section:
-            current_section['content'] = current_section_content
-            sections_list.append(current_section)
-        
-        # Build statistics
-        statistics = self._build_statistics(lines, sections_list, questions, preamble)
-        
-        return DocumentStructure(
-            document_info=document_info,
-            metadata=metadata,
-            preamble=preamble,
-            sections=sections_list,
-            statistics=statistics
-        )
+        # Build relationships
+        for section in sections:
+            if section['parent_id']:
+                parent = section_map.get(section['parent_id'])
+                if parent:
+                    parent['children'].append(section)
+                    # Remove from top-level list
+                    if section in sections:
+                        sections.remove(section)
     
     def _build_document_info(self, lines: List[Dict[str, Any]], metadata: Any) -> Dict[str, Any]:
         """Build document information."""

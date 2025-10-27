@@ -1,8 +1,8 @@
 """
-Enhanced Section Detector for RFP Documents
+Hierarchical Section Detector for RFP Documents
 
 This module provides functionality to detect section headers in RFP documents
-with improved accuracy by filtering noise and using RFP-specific patterns.
+with proper hierarchical structure detection using a 3-pass algorithm.
 """
 
 import re
@@ -18,7 +18,9 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SectionCandidate:
     """Represents a potential section header."""
+    id: str
     title: str
+    level: int  # 1, 2, or 3
     index: int
     confidence: str  # "high", "medium", "low"
     font_size: float
@@ -26,12 +28,12 @@ class SectionCandidate:
     y_position: float
     page_number: int
     reason: str  # Why this was identified as a section
-    style: Dict[str, Any] = None  # Style signature
-    parent_section: str = None  # Parent section if hierarchical
+    parent_id: Optional[str] = None
+    style: Dict[str, Any] = None
 
 
-class SectionDetector:
-    """Enhanced section detector for RFP documents."""
+class HierarchicalSectionDetector:
+    """Enhanced section detector with proper hierarchical structure detection."""
     
     def __init__(self):
         self.avg_font_size = 0.0
@@ -46,21 +48,37 @@ class SectionDetector:
             "sections_confirmed": 0,
             "excluded_count": 0
         }
+        
+        # Pattern definitions for hierarchical detection
+        self.level1_pattern = re.compile(r'^\s*(I{1,3}|IV|V|VI{0,3}|IX|X)\.\s+[A-Z][A-Z\s]+$')
+        self.level2_pattern = re.compile(r'^\s*[A-J]\.\s+[A-Z][a-z].*')
+        self.level3_pattern = re.compile(r'^\s*\d{1,2}\.\s+')
+        
+        # Question indicators for Level 3 classification
+        self.question_indicators = [
+            'please', 'describe', 'what', 'how', 'do you', 'can you', 'will you',
+            'explain', 'provide', 'list', 'identify', 'outline', 'detail'
+        ]
     
     def detect_sections(self, lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
         """
-        Detect section headers in the document.
+        Detect section headers with proper hierarchical structure.
+        
+        Uses a 3-pass algorithm:
+        1. FIRST PASS - Detect document structure markers by pattern
+        2. SECOND PASS - Build hierarchy relationships
+        3. THIRD PASS - Classify Level 3 items correctly
         
         Args:
             lines: List of line dictionaries with text and formatting info
             
         Returns:
-            List of detected sections with confidence levels
+            List of detected sections with proper hierarchy
         """
         if not lines:
             return []
         
-        logger.info(f"Starting section detection on {len(lines)} lines")
+        logger.info(f"Starting hierarchical section detection on {len(lines)} lines")
         
         # Step 1: Pre-filtering - identify and exclude noise
         self._pre_filter_noise(lines)
@@ -68,18 +86,23 @@ class SectionDetector:
         # Step 2: Calculate baseline metrics
         self._calculate_baseline_metrics(lines)
         
-        # Step 3: Detect sections using priority rules
-        sections = self._detect_sections_with_rules(lines)
+        # FIRST PASS - Detect document structure markers by pattern
+        logger.debug("FIRST PASS: Detecting structure markers by pattern")
+        level1_sections = self._detect_level1_sections(lines)
+        level2_sections = self._detect_level2_sections(lines)
+        level3_items = self._detect_level3_items(lines)
         
-        # Step 4: Style consistency check
-        if sections:
-            sections = self._apply_style_consistency_check(lines, sections)
         
-        # Step 5: Handle numbered lists vs sections
-        sections = self._handle_numbered_lists_vs_sections(lines, sections)
+        # SECOND PASS - Build hierarchy relationships
+        logger.debug("SECOND PASS: Building hierarchy relationships")
+        sections = self._build_hierarchy(level1_sections, level2_sections, level3_items)
+        
+        # THIRD PASS - Classify Level 3 items correctly
+        logger.debug("THIRD PASS: Classifying Level 3 items")
+        sections = self._classify_level3_items(sections, lines)
         
         self.debug_info["sections_confirmed"] = len(sections)
-        logger.info(f"Detected {len(sections)} sections")
+        logger.info(f"Detected {len(sections)} sections with hierarchy")
         
         return sections
     
@@ -105,11 +128,16 @@ class SectionDetector:
                     page_header_candidates[text] = []
                 page_header_candidates[text].append(page_num)
         
-        # Identify repeated headers
+        # Identify repeated headers (but be more selective)
         for text, pages in page_header_candidates.items():
             if len(pages) > 1:  # Appears on multiple pages
-                self.page_headers.add(text)
-                self.excluded_headers.add(text)
+                # Only exclude if it looks like a page header (short, not section-like)
+                if (len(text.split()) <= 3 and 
+                    not re.match(r'^[A-Z]\.\s+', text) and  # Not a section header
+                    not re.match(r'^\d+\.\s+', text) and   # Not a numbered item
+                    not re.match(r'^[IVX]+\.\s+', text)):  # Not a Roman numeral section
+                    self.page_headers.add(text)
+                    self.excluded_headers.add(text)
         
         # Add common noise patterns
         noise_patterns = [
@@ -155,10 +183,8 @@ class SectionDetector:
         
         logger.debug(f"Baseline: avg={self.avg_font_size:.1f}, mode={self.mode_font_size:.1f}, threshold={self.section_threshold:.1f}")
     
-    def _detect_sections_with_rules(self, lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
-        """Detect sections using priority-ordered rules."""
-        logger.debug("Applying section detection rules")
-        
+    def _detect_level1_sections(self, lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
+        """Detect Level 1 sections (Roman numerals + uppercase text)."""
         sections = []
         
         for i, line in enumerate(lines):
@@ -168,240 +194,240 @@ class SectionDetector:
             if text in self.excluded_headers or text in self.page_headers:
                 continue
             
-            # Skip very short or very long lines
-            word_count = len(text.split())
-            if word_count < 2 or word_count > 15:
-                continue
-            
-            # Skip questions
-            if text.endswith('?'):
-                continue
-            
-            # Skip lines with "Page" in them
-            if 'Page' in text:
-                continue
-            
-            # Skip organization/company names (all caps, short)
-            if text.isupper() and word_count <= 3:
-                continue
-            
-            # Skip single word lines
-            if word_count == 1:
-                continue
-            
-            # HIGH CONFIDENCE RULES
-            section = self._check_high_confidence_rules(text, i, line)
-            if section:
+            # Check Level 1 pattern: Roman numerals followed by period + uppercase text
+            if self.level1_pattern.match(text):
+                # Extract Roman numeral for ID
+                roman_match = re.match(r'^\s*([IVX]+)\.', text)
+                roman_id = roman_match.group(1) if roman_match else f"L1_{i}"
+                
+                section = SectionCandidate(
+                    id=roman_id,
+                    title=text,
+                    level=1,
+                    index=i,
+                    confidence="high",
+                    font_size=line.get('font_size', 10),
+                    is_bold=line.get('is_bold', False),
+                    y_position=line.get('y_position', 0),
+                    page_number=line.get('page_number', 1),
+                    reason="level1_roman_pattern",
+                    parent_id=None,
+                    style={"pattern": "level1_roman", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
+                )
                 sections.append(section)
-                continue
-            
-            # MEDIUM CONFIDENCE RULES
-            section = self._check_medium_confidence_rules(text, i, line)
-            if section:
-                sections.append(section)
+                logger.debug(f"Found Level 1 section: {text}")
         
-        # Sort by line index
-        sections.sort(key=lambda s: s.index)
-        
-        logger.debug(f"Found {len(sections)} section candidates")
         return sections
     
-    def _check_high_confidence_rules(self, text: str, index: int, line: Dict[str, Any]) -> Optional[SectionCandidate]:
-        """Check high confidence section patterns."""
+    def _detect_level2_sections(self, lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
+        """Detect Level 2 sections (Single letters + title case)."""
+        sections = []
         
-        # Rule 1: Section [Roman/Number/Letter] pattern
-        section_roman_match = re.match(r'^Section\s+([IVX]+|\d+|[A-Z])', text, re.IGNORECASE)
-        if section_roman_match:
-            return SectionCandidate(
-                title=text,
-                index=index,
-                confidence="high",
-                font_size=line.get('font_size', 10),
-                is_bold=line.get('is_bold', False),
-                y_position=line.get('y_position', 0),
-                page_number=line.get('page_number', 1),
-                reason="section_roman_pattern",
-                style={"pattern": "section_roman", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
-            )
-        
-        # Rule 2: Single capital letter + period + space (A. Background)
-        letter_period_match = re.match(r'^[A-Z]\.\s+[A-Z]', text)
-        if letter_period_match:
-            return SectionCandidate(
-                title=text,
-                index=index,
-                confidence="high",
-                font_size=line.get('font_size', 10),
-                is_bold=line.get('is_bold', False),
-                y_position=line.get('y_position', 0),
-                page_number=line.get('page_number', 1),
-                reason="letter_period_pattern",
-                style={"pattern": "letter_prefix", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
-            )
-        
-        # Rule 3: Bold + Larger than average (2+ pts) + Title Case + 3-10 words
-        font_size = line.get('font_size', 10)
-        is_bold = line.get('is_bold', False)
-        word_count = len(text.split())
-        
-        if (is_bold and 
-            font_size >= (self.avg_font_size + 2.0) and  # 2+ points larger than average
-            text.istitle() and 
-            3 <= word_count <= 10):
-            return SectionCandidate(
-                title=text,
-                index=index,
-                confidence="high",
-                font_size=font_size,
-                is_bold=is_bold,
-                y_position=line.get('y_position', 0),
-                page_number=line.get('page_number', 1),
-                reason="bold_large_title_case",
-                style={"pattern": "bold_title", "font_size": font_size, "bold": is_bold}
-            )
-        
-        return None
-    
-    def _check_medium_confidence_rules(self, text: str, index: int, line: Dict[str, Any]) -> Optional[SectionCandidate]:
-        """Check medium confidence section patterns."""
-        
-        # Rule 1: All uppercase 3-8 words (but NOT single words like "ACME")
-        word_count = len(text.split())
-        if (text.isupper() and 
-            3 <= word_count <= 8 and 
-            word_count > 1):  # Not single word
-            return SectionCandidate(
-                title=text,
-                index=index,
-                confidence="medium",
-                font_size=line.get('font_size', 10),
-                is_bold=line.get('is_bold', False),
-                y_position=line.get('y_position', 0),
-                page_number=line.get('page_number', 1),
-                reason="all_uppercase",
-                style={"pattern": "uppercase", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
-            )
-        
-        # Rule 2: Ends with colon + bold + not a question
-        if (text.endswith(':') and 
-            line.get('is_bold', False) and 
-            not text.endswith('?')):
-            return SectionCandidate(
-                title=text,
-                index=index,
-                confidence="medium",
-                font_size=line.get('font_size', 10),
-                is_bold=line.get('is_bold', False),
-                y_position=line.get('y_position', 0),
-                page_number=line.get('page_number', 1),
-                reason="ends_with_colon_bold",
-                style={"pattern": "colon_bold", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
-            )
-        
-        # Rule 3: Hierarchical numbering starting section (e.g., "1. Overview" where 2., 3. follow)
-        hierarchical_match = re.match(r'^(\d+)\.\s+[A-Z]', text)
-        if hierarchical_match:
-            # Check if this looks like a section starter (not a question)
-            if not text.endswith('?') and len(text.split()) >= 2:
-                return SectionCandidate(
+        for i, line in enumerate(lines):
+            text = line.get('text', '').strip()
+            
+            # Skip excluded headers
+            if text in self.excluded_headers or text in self.page_headers:
+                continue
+            
+            
+            # Check Level 2 pattern: Single letters followed by period + title case
+            if self.level2_pattern.match(text):
+                # Extract letter for ID
+                letter_match = re.match(r'^\s*([A-J])\.', text)
+                letter_id = letter_match.group(1) if letter_match else f"L2_{i}"
+                
+                section = SectionCandidate(
+                    id=letter_id,
                     title=text,
-                    index=index,
+                    level=2,
+                    index=i,
+                    confidence="high",
+                    font_size=line.get('font_size', 10),
+                    is_bold=line.get('is_bold', False),
+                    y_position=line.get('y_position', 0),
+                    page_number=line.get('page_number', 1),
+                    reason="level2_letter_pattern",
+                    parent_id=None,  # Will be set in hierarchy building
+                    style={"pattern": "level2_letter", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
+                )
+                sections.append(section)
+                logger.debug(f"Found Level 2 section: {text}")
+        
+        return sections
+    
+    def _detect_level3_items(self, lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
+        """Detect Level 3 items (Numbers followed by period)."""
+        items = []
+        
+        for i, line in enumerate(lines):
+            text = line.get('text', '').strip()
+            
+            # Skip excluded headers
+            if text in self.excluded_headers or text in self.page_headers:
+                continue
+            
+            # Check Level 3 pattern: Numbers followed by period
+            if self.level3_pattern.match(text):
+                # Extract number for ID
+                number_match = re.match(r'^\s*(\d{1,2})\.', text)
+                number_id = number_match.group(1) if number_match else f"L3_{i}"
+                
+                item = SectionCandidate(
+                    id=number_id,
+                    title=text,
+                    level=3,
+                    index=i,
                     confidence="medium",
                     font_size=line.get('font_size', 10),
                     is_bold=line.get('is_bold', False),
                     y_position=line.get('y_position', 0),
                     page_number=line.get('page_number', 1),
-                    reason="hierarchical_numbering",
-                    style={"pattern": "hierarchical", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
+                    reason="level3_number_pattern",
+                    parent_id=None,  # Will be set in hierarchy building
+                    style={"pattern": "level3_number", "font_size": line.get('font_size', 10), "bold": line.get('is_bold', False)}
                 )
+                items.append(item)
+                logger.debug(f"Found Level 3 item: {text}")
         
-        return None
+        return items
     
-    def _apply_style_consistency_check(self, lines: List[Dict[str, Any]], sections: List[SectionCandidate]) -> List[SectionCandidate]:
-        """Apply style consistency check once first section is found."""
-        if not sections:
-            return sections
+    def _build_hierarchy(self, level1_sections: List[SectionCandidate], 
+                        level2_sections: List[SectionCandidate], 
+                        level3_items: List[SectionCandidate]) -> List[SectionCandidate]:
+        """Build hierarchy relationships between sections."""
+        all_sections = []
         
-        logger.debug("Applying style consistency check")
+        # Sort all sections by index
+        all_items = sorted(level1_sections + level2_sections + level3_items, key=lambda x: x.index)
         
-        # Get style profile from first high-confidence section
-        first_section = sections[0]
-        if first_section.confidence == "high":
-            self.section_style_profile = {
-                'font_size': first_section.font_size,
-                'is_bold': first_section.is_bold,
-                'pattern': first_section.style.get('pattern', 'unknown')
-            }
-            
-            # Find other lines with similar styling
-            for i, line in enumerate(lines):
-                if i == first_section.index:
-                    continue
-                
-                text = line.get('text', '').strip()
-                if (text in self.excluded_headers or 
-                    text in self.page_headers or
-                    len(text.split()) < 2 or 
-                    len(text.split()) > 15):
-                    continue
-                
-                font_size = line.get('font_size', 10)
-                is_bold = line.get('is_bold', False)
-                
-                # Check if style matches (±1pt font, same bold status)
-                if (abs(font_size - self.section_style_profile['font_size']) <= 1.0 and
-                    is_bold == self.section_style_profile['is_bold']):
-                    
-                    # Check if not already a section
-                    if not any(s.index == i for s in sections):
-                        sections.append(SectionCandidate(
-                            title=text,
-                            index=i,
-                            confidence="medium",
-                            font_size=font_size,
-                            is_bold=is_bold,
-                            y_position=line.get('y_position', 0),
-                            page_number=line.get('page_number', 1),
-                            reason="style_consistency",
-                            style={"pattern": "style_match", "font_size": font_size, "bold": is_bold}
-                        ))
+        current_level1 = None
+        current_level2 = None
         
-        # Sort by index again
-        sections.sort(key=lambda s: s.index)
+        for item in all_items:
+            if item.level == 1:
+                # Level 1 section - reset current Level 2
+                current_level1 = item
+                current_level2 = None
+                item.parent_id = None
+                all_sections.append(item)
+                logger.debug(f"Set Level 1: {item.title}")
+                
+            elif item.level == 2:
+                # Level 2 section - set parent to current Level 1
+                if current_level1:
+                    item.parent_id = current_level1.id
+                    current_level2 = item
+                    all_sections.append(item)
+                    logger.debug(f"Set Level 2: {item.title} under {current_level1.title}")
+                else:
+                    # Orphaned Level 2 - treat as Level 1
+                    item.level = 1
+                    item.parent_id = None
+                    all_sections.append(item)
+                    logger.debug(f"Promoted orphaned Level 2 to Level 1: {item.title}")
+                
+            elif item.level == 3:
+                # Level 3 item - set parent to current Level 2 or Level 1
+                if current_level2:
+                    item.parent_id = current_level2.id
+                    all_sections.append(item)
+                    logger.debug(f"Set Level 3: {item.title} under {current_level2.title}")
+                elif current_level1:
+                    item.parent_id = current_level1.id
+                    all_sections.append(item)
+                    logger.debug(f"Set Level 3: {item.title} under {current_level1.title}")
+                else:
+                    # Orphaned Level 3 - treat as Level 1
+                    item.level = 1
+                    item.parent_id = None
+                    all_sections.append(item)
+                    logger.debug(f"Promoted orphaned Level 3 to Level 1: {item.title}")
+        
+        return all_sections
+    
+    def _classify_level3_items(self, sections: List[SectionCandidate], lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
+        """Classify Level 3 items as questions or sections."""
+        for section in sections:
+            if section.level == 3:
+                text_lower = section.title.lower()
+                
+                # Check if it contains question indicators
+                is_question = any(indicator in text_lower for indicator in self.question_indicators)
+                
+                if is_question:
+                    section.reason = "level3_question"
+                    section.confidence = "high"
+                    logger.debug(f"Classified as question: {section.title}")
+                else:
+                    section.reason = "level3_section"
+                    section.confidence = "medium"
+                    logger.debug(f"Classified as section: {section.title}")
+        
         return sections
     
-    def _handle_numbered_lists_vs_sections(self, lines: List[Dict[str, Any]], sections: List[SectionCandidate]) -> List[SectionCandidate]:
-        """Handle numbered lists vs sections logic."""
-        logger.debug("Handling numbered lists vs sections")
+    def _assign_content_to_sections(self, sections: List[SectionCandidate], lines: List[Dict[str, Any]]) -> List[SectionCandidate]:
+        """Assign content between sections to the appropriate section."""
+        # Create a map of section indices
+        section_map = {s.index: s for s in sections}
         
-        # This is a simplified version - in practice, you'd want more sophisticated logic
-        # to determine if numbered items are questions under a section or standalone sections
+        # Sort sections by index
+        sorted_sections = sorted(sections, key=lambda x: x.index)
+        
+        for i, section in enumerate(sorted_sections):
+            # Find the next section of same or higher level
+            next_section_index = len(lines)
+            for j in range(i + 1, len(sorted_sections)):
+                if sorted_sections[j].level <= section.level:
+                    next_section_index = sorted_sections[j].index
+                    break
+            
+            # Collect content between current section and next section
+            content_lines = []
+            for line_idx in range(section.index + 1, next_section_index):
+                if line_idx < len(lines):
+                    line = lines[line_idx]
+                    text = line.get('text', '').strip()
+                    
+                    # Skip empty lines and noise
+                    if text and text not in self.excluded_headers and text not in self.page_headers:
+                        content_lines.append({
+                            'text': text,
+                            'page': line.get('page_number', 1),
+                            'line_index': line_idx
+                        })
+            
+            # Store content in section (this would need to be added to SectionCandidate)
+            # For now, we'll just log the content
+            logger.debug(f"Section '{section.title}' has {len(content_lines)} content lines")
         
         return sections
 
 
 def detect_sections(lines: List[Dict[str, Any]]) -> Dict[str, Any]:
     """
-    Main function to detect sections from PDF lines.
+    Main function to detect sections with hierarchical structure.
     
     Args:
         lines: List of line dictionaries with text and formatting info
         
     Returns:
-        Dictionary with sections, excluded headers, and debug info
+        Dictionary with hierarchical sections and debug info
     """
-    detector = SectionDetector()
+    detector = HierarchicalSectionDetector()
     sections = detector.detect_sections(lines)
     
-    # Convert to dictionary format
+    # Convert to dictionary format with proper hierarchy
     sections_list = []
     for section in sections:
         sections_list.append({
+            "id": section.id,
             "title": section.title,
+            "level": section.level,
+            "parent_id": section.parent_id,
             "line_index": section.index,
             "confidence": section.confidence,
             "style": section.style,
-            "parent_section": section.parent_section,
             "page_number": section.page_number,
             "y_position": section.y_position,
             "reason": section.reason
