@@ -8,11 +8,15 @@ class ContentItem(BaseModel):
     number: Optional[str] = None  # For questions
 
 class Section(BaseModel):
+    id: str
     title: str
-    type: str = "section"
+    level: int  # 1, 2, or 3
+    parent_id: Optional[str] = None
+    children: List['Section'] = []
+    content: List[ContentItem] = []
     page: int
     confidence: str
-    content: List[ContentItem] = []
+    type: str = "section"
 
 class DocumentInfo(BaseModel):
     document_type: Optional[str] = None
